@@ -42,13 +42,23 @@ def init_gemini_model(model_name: str = "gemini-1.5-flash-latest", api_key: str 
 	return genai.GenerativeModel(model_name)
 
 
-def resolve_supported_model(preferred_name: str) -> str:
+def resolve_supported_model(preferred_name: str, api_key: str = "") -> str:
 	"""
 	Resolve a supported model name for the current SDK/account by listing models and
 	picking one that supports generateContent. Returns full model name (may be 'models/...').
 	"""
 	if genai is None:
-		return preferred_name
+		# Fallback to standard model name format
+		cleaned = preferred_name.replace("-latest", "")
+		return cleaned if cleaned else "gemini-pro"
+	
+	# Configure API if key provided
+	if api_key:
+		try:
+			genai.configure(api_key=api_key)
+		except Exception:
+			pass
+	
 	try:
 		models = list(genai.list_models())
 		def supports_generate(m) -> bool:
@@ -56,32 +66,44 @@ def resolve_supported_model(preferred_name: str) -> str:
 			return "generateContent" in methods
 
 		def name_matches(m, short_or_full: str) -> bool:
-			return m.name == short_or_full or m.name.endswith("/" + short_or_full)
+			# Remove -latest suffix for matching
+			clean_name = short_or_full.replace("-latest", "")
+			# Check various formats
+			return (m.name == short_or_full or 
+			        m.name == f"models/{short_or_full}" or
+			        m.name.endswith("/" + short_or_full) or 
+			        m.name.endswith("/" + clean_name) or 
+			        m.name == clean_name or
+			        m.name == f"models/{clean_name}")
 
 		supported = [m for m in models if supports_generate(m)]
+		if not supported:
+			# No supported models found, return safe fallback
+			return "gemini-pro"
+		
 		# Exact preferred match
 		for m in supported:
 			if name_matches(m, preferred_name):
 				return m.name
 
-		# Preference fallbacks
+		# Preference fallbacks (remove -latest suffixes)
+		clean_preferred = preferred_name.replace("-latest", "")
 		preferences = [
-			preferred_name,
-			"gemini-2.5-flash",
-			"gemini-2.0-flash",
-			"gemini-1.5-flash",
+			clean_preferred,
+			"gemini-pro",  # Most widely available
 			"gemini-1.5-pro",
+			"gemini-1.5-flash",
 		]
 		for cand in preferences:
 			for m in supported:
 				if name_matches(m, cand):
 					return m.name
-		# Last resort
-		if supported:
-			return supported[0].name
-	except Exception:
-		return preferred_name
-	return preferred_name
+		# Last resort - return first supported model
+		return supported[0].name
+	except Exception as e:
+		# If listing models fails, return safe fallback
+		cleaned = preferred_name.replace("-latest", "")
+		return cleaned if cleaned else "gemini-pro"
 
 
 def generate_questions(tech_stack_list: List[str], model) -> List[str]:
